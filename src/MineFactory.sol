@@ -88,14 +88,20 @@ contract MineFactory is AccessManaged {
      * @param resource The resource token contract this mine will produce
      * @return The address of the newly created mine contract
      */
-    function createMine(IERC20 resource) external restricted returns (address) {
+    function createMine(IERC20 resource, uint256 initialProductionPerDay, uint256 halvingPeriod)
+        external
+        restricted
+        returns (address)
+    {
         require(RESOURCE_MANAGER.isResource(resource), InvalidResource());
 
         // Create a minimal proxy clone of the implementation
         address mineAddress = Clones.clone(MINE_IMPLEMENTATION);
 
         // Initialize the cloned mine
-        Mine(mineAddress).initialize(authority(), RESOURCE_MANAGER, GAME_MASTER, MERC_FACTORY, resource);
+        Mine(mineAddress).initialize(
+            authority(), RESOURCE_MANAGER, GAME_MASTER, MERC_FACTORY, resource, initialProductionPerDay, halvingPeriod
+        );
 
         // Grant game permissions to the new mine on GameMaster
         // Only set the target function roles if this is the first mine

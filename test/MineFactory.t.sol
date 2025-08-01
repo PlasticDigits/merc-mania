@@ -121,6 +121,8 @@ contract MineFactoryTest is Test {
     GameMaster public gameMaster;
     MercAssetFactory public mercFactory;
     MockGuard public mockGuard;
+    uint256 public constant INITIAL_PRODUCTION_PER_DAY = 100 ether;
+    uint256 public constant HALVING_PERIOD = 3 days;
 
     address public admin = address(0x1);
     address public authorized = address(0x2);
@@ -168,7 +170,7 @@ contract MineFactoryTest is Test {
         accessManager.grantRole(accessManager.ADMIN_ROLE(), address(factory), 0);
 
         // Get the function selector for createMine
-        bytes4 createMineSelector = bytes4(keccak256("createMine(address)"));
+        bytes4 createMineSelector = bytes4(keccak256("createMine(address,uint256,uint256)"));
         bytes4[] memory selectors = new bytes4[](1);
         selectors[0] = createMineSelector;
 
@@ -220,7 +222,7 @@ contract MineFactoryTest is Test {
         vm.expectEmit(false, true, false, true);
         emit MineCreated(address(0), goldToken); // Address will be different, so we ignore it
 
-        address mineAddress = factory.createMine(goldToken);
+        address mineAddress = factory.createMine(goldToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
 
         // Verify mine was created
         assertNotEq(mineAddress, address(0));
@@ -254,11 +256,11 @@ contract MineFactoryTest is Test {
         // Should revert when called by unauthorized user
         vm.prank(unauthorized);
         vm.expectRevert();
-        factory.createMine(goldToken);
+        factory.createMine(goldToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
 
         // Should succeed when called by authorized user
         vm.prank(authorized);
-        address mineAddress = factory.createMine(goldToken);
+        address mineAddress = factory.createMine(goldToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
         assertNotEq(mineAddress, address(0));
     }
 
@@ -271,7 +273,7 @@ contract MineFactoryTest is Test {
 
         vm.prank(authorized);
         vm.expectRevert(MineFactory.InvalidResource.selector);
-        factory.createMine(IERC20(address(invalidToken)));
+        factory.createMine(IERC20(address(invalidToken)), INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
     }
 
     /**
@@ -281,12 +283,12 @@ contract MineFactoryTest is Test {
         vm.startPrank(authorized);
 
         // Create mines for different resources
-        address goldMine = factory.createMine(goldToken);
-        address ironMine = factory.createMine(ironToken);
-        address stoneMine = factory.createMine(stoneToken);
+        address goldMine = factory.createMine(goldToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
+        address ironMine = factory.createMine(ironToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
+        address stoneMine = factory.createMine(stoneToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
 
         // Create another gold mine
-        address goldMine2 = factory.createMine(goldToken);
+        address goldMine2 = factory.createMine(goldToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
 
         vm.stopPrank();
 
@@ -322,7 +324,7 @@ contract MineFactoryTest is Test {
         // Create 5 mines
         address[] memory mines = new address[](5);
         for (uint256 i = 0; i < 5; i++) {
-            mines[i] = factory.createMine(goldToken);
+            mines[i] = factory.createMine(goldToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
         }
 
         vm.stopPrank();
@@ -370,12 +372,12 @@ contract MineFactoryTest is Test {
         // Create mines for multiple resources
         address[] memory goldMines = new address[](3);
         for (uint256 i = 0; i < 3; i++) {
-            goldMines[i] = factory.createMine(goldToken);
+            goldMines[i] = factory.createMine(goldToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
         }
 
         // Create mines for iron (should not affect gold pagination)
-        factory.createMine(ironToken);
-        factory.createMine(ironToken);
+        factory.createMine(ironToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
+        factory.createMine(ironToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
 
         vm.stopPrank();
 
@@ -435,7 +437,7 @@ contract MineFactoryTest is Test {
      */
     function testTargetFunctionRoleSetup() public {
         vm.prank(authorized);
-        factory.createMine(goldToken);
+        factory.createMine(goldToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
 
         // Verify that target function roles were set for GameMaster
         // This is tested implicitly by the mine being able to call GameMaster methods
@@ -443,7 +445,7 @@ contract MineFactoryTest is Test {
 
         // Create another mine to ensure target function roles are only set once
         vm.prank(authorized);
-        factory.createMine(ironToken);
+        factory.createMine(ironToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
 
         assertEq(factory.getMineCount(), 2);
     }
@@ -455,9 +457,9 @@ contract MineFactoryTest is Test {
         vm.startPrank(authorized);
 
         // Test creating mine with same resource multiple times
-        address mine1 = factory.createMine(goldToken);
-        address mine2 = factory.createMine(goldToken);
-        address mine3 = factory.createMine(goldToken);
+        address mine1 = factory.createMine(goldToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
+        address mine2 = factory.createMine(goldToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
+        address mine3 = factory.createMine(goldToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
 
         assertNotEq(mine1, mine2);
         assertNotEq(mine2, mine3);
@@ -500,7 +502,7 @@ contract MineFactoryTest is Test {
         // Create many mines
         for (uint256 i = 0; i < numMines; i++) {
             IERC20 resource = (i % 3 == 0) ? goldToken : (i % 3 == 1) ? ironToken : stoneToken;
-            factory.createMine(resource);
+            factory.createMine(resource, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
         }
 
         assertEq(factory.getMineCount(), numMines);
@@ -526,9 +528,9 @@ contract MineFactoryTest is Test {
         vm.startPrank(authorized);
 
         // Create mines and verify state is consistent
-        address goldMine1 = factory.createMine(goldToken);
-        address ironMine1 = factory.createMine(ironToken);
-        address goldMine2 = factory.createMine(goldToken);
+        address goldMine1 = factory.createMine(goldToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
+        address ironMine1 = factory.createMine(ironToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
+        address goldMine2 = factory.createMine(goldToken, INITIAL_PRODUCTION_PER_DAY, HALVING_PERIOD);
 
         // Verify all state getters are consistent
         assertEq(factory.getMineCount(), 3);

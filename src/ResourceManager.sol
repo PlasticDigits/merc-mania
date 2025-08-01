@@ -30,20 +30,25 @@ contract ResourceManager is IResourceManager, AccessManaged {
     /// @notice The Gold token, which is required in all resource combinations
     /// @dev Special constant resource that serves as the base currency for the game
     ///      Automatically created during contract construction
-    IERC20 public immutable GOLD;
+    IERC20 public GOLD;
 
     /**
-     * @notice Constructs the ResourceManager and creates the Gold token
-     * @dev Automatically creates Gold as the first resource during deployment
-     *      Gold cannot be removed and must be included in all resource combinations
+     * @notice Constructs the ResourceManager
+     * @dev Gold must be initialized separately using initializeGold() after deployment
      * @param _authority The access manager contract that controls permissions
      * @param _assetFactory The factory contract used to create resource tokens
      */
     constructor(address _authority, GameAssetFactory _assetFactory) AccessManaged(_authority) {
         ASSET_FACTORY = _assetFactory;
+        // GOLD is initialized to address(0) and must be set via initializeGold()
+    }
 
-        // Create Gold as the first resource
-        address goldAddress = _assetFactory.createAsset("Gold", "GOLD", "");
+    // initialize gold as the first resource
+    function initializeGold(string calldata goldTokenUri) external restricted {
+        // only allow initialization once
+        require(GOLD == IERC20(address(0)), "Gold already initialized");
+
+        address goldAddress = ASSET_FACTORY.createAsset("Gold", "GOLD", goldTokenUri);
         GOLD = IERC20(goldAddress);
         _resources.add(goldAddress);
         emit ResourceAdded(goldAddress, "Gold");

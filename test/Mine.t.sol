@@ -227,7 +227,9 @@ contract MineTest is Test {
             resourceManager,
             GameMaster(address(gameMaster)),
             MercAssetFactory(address(mercFactory)),
-            IERC20(address(ironToken))
+            IERC20(address(ironToken)),
+            INITIAL_PRODUCTION_PER_DAY,
+            HALVING_PERIOD
         );
 
         // Setup initial balances for testing
@@ -263,7 +265,9 @@ contract MineTest is Test {
             resourceManager,
             GameMaster(address(gameMaster)),
             MercAssetFactory(address(mercFactory)),
-            IERC20(address(ironToken))
+            IERC20(address(ironToken)),
+            INITIAL_PRODUCTION_PER_DAY,
+            HALVING_PERIOD
         );
     }
 
@@ -275,7 +279,9 @@ contract MineTest is Test {
             resourceManager,
             GameMaster(address(gameMaster)),
             MercAssetFactory(address(mercFactory)),
-            IERC20(address(ironToken))
+            IERC20(address(ironToken)),
+            INITIAL_PRODUCTION_PER_DAY,
+            HALVING_PERIOD
         );
 
         assertEq(address(newMine.RESOURCE_MANAGER()), address(resourceManager));
@@ -294,7 +300,9 @@ contract MineTest is Test {
             resourceManager,
             GameMaster(address(gameMaster)),
             MercAssetFactory(address(mercFactory)),
-            IERC20(address(ironToken))
+            IERC20(address(ironToken)),
+            INITIAL_PRODUCTION_PER_DAY,
+            HALVING_PERIOD
         );
     }
 
@@ -435,7 +443,9 @@ contract MineTest is Test {
             resourceManager,
             GameMaster(address(gameMaster)),
             MercAssetFactory(address(mercFactory)),
-            IERC20(address(ironToken))
+            IERC20(address(ironToken)),
+            INITIAL_PRODUCTION_PER_DAY,
+            HALVING_PERIOD
         );
 
         // Call getDefenderMercs on the fresh mine - this will hit the missing branch

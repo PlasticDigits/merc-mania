@@ -85,12 +85,16 @@ contract ResourceManagerTest is Test {
 
         resourceManager = new ResourceManager(address(accessManager), assetFactory);
 
-        // Get Gold reference (automatically created in constructor)
+        // Initialize Gold (required after constructor)
+        resourceManager.initializeGold("The primary currency of mercenary operations");
+
+        // Get Gold reference (created by initializeGold)
         gold = resourceManager.GOLD();
 
         // Grant permissions to user for testing restricted functions
         bytes4 addResourceSelector = ResourceManager.addResource.selector;
         bytes4 removeResourceSelector = ResourceManager.removeResource.selector;
+        bytes4 initializeGoldSelector = ResourceManager.initializeGold.selector;
 
         uint64 resourceManagerRole = 1;
 
@@ -102,7 +106,12 @@ contract ResourceManagerTest is Test {
         removeResourceSelectors[0] = removeResourceSelector;
         accessManager.setTargetFunctionRole(address(resourceManager), removeResourceSelectors, resourceManagerRole);
 
+        bytes4[] memory initializeGoldSelectors = new bytes4[](1);
+        initializeGoldSelectors[0] = initializeGoldSelector;
+        accessManager.setTargetFunctionRole(address(resourceManager), initializeGoldSelectors, resourceManagerRole);
+
         accessManager.grantRole(resourceManagerRole, user, 0);
+        accessManager.grantRole(resourceManagerRole, admin, 0); // Admin needs this to call initializeGold
 
         // Create some test tokens for comprehensive testing
         invalidToken = new MockERC20("Invalid", "INV");
@@ -122,20 +131,30 @@ contract ResourceManagerTest is Test {
         assertEq(address(resourceManager.ASSET_FACTORY()), address(assetFactory), "Factory reference should be set");
     }
 
-    /// @dev Test constructor emits ResourceAdded event for Gold
+    /// @dev Test initializeGold emits ResourceAdded event for Gold
     function test_ConstructorEmitsEvent() public {
         vm.startPrank(admin);
 
         // Setup permissions for a new ResourceManager instance
         uint64 assetCreatorRole = 2;
+        uint64 resourceManagerRole = 1;
         address predictedResourceManager = vm.computeCreateAddress(admin, vm.getNonce(admin));
         accessManager.grantRole(assetCreatorRole, predictedResourceManager, 0);
+        accessManager.grantRole(resourceManagerRole, admin, 0);
 
-        // Deploy new instance to test event emission
+        // Deploy new instance
+        ResourceManager newResourceManager = new ResourceManager(address(accessManager), assetFactory);
+
+        // Set up permissions for initializeGold
+        bytes4[] memory initializeGoldSelectors = new bytes4[](1);
+        initializeGoldSelectors[0] = ResourceManager.initializeGold.selector;
+        accessManager.setTargetFunctionRole(address(newResourceManager), initializeGoldSelectors, resourceManagerRole);
+
+        // Test event emission during initializeGold
         vm.expectEmit(false, false, false, true);
         emit ResourceAdded(address(0), "Gold"); // Don't check Gold address since it will be different
 
-        new ResourceManager(address(accessManager), assetFactory);
+        newResourceManager.initializeGold("The primary currency of mercenary operations");
 
         vm.stopPrank();
     }

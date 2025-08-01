@@ -58,13 +58,13 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
     /// @dev Used to calculate accumulated resources since last claim
     uint256 public lastResourceClaim;
 
-    /// @notice Period after which production rate halves (3 days)
+    /// @notice Period after which production rate halves (in seconds)
     /// @dev Prevents infinite resource accumulation by implementing diminishing returns
-    uint256 private constant HALVING_PERIOD = 3 days;
+    uint256 public halvingPeriod;
 
-    /// @notice Initial production rate of 100 tokens per day
+    /// @notice Initial production rate per day, in wei
     /// @dev Starting production rate that decreases over time
-    uint256 private constant INITIAL_PRODUCTION_PER_DAY = 100e18;
+    uint256 public initialProductionPerDay;
 
     /// @notice Minimum number of mercenaries required to attempt a seizure
     /// @dev Prevents spam attacks with tiny mercenary amounts
@@ -108,13 +108,16 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
      * @param _gameMaster The game master for balance management
      * @param _mercFactory The mercenary factory for token validation
      * @param _resource The resource token this mine will produce
+     * @param _initialProductionPerDay The initial production rate per day
      */
     function initialize(
         address _authority,
         IResourceManager _resourceManager,
         GameMaster _gameMaster,
         MercAssetFactory _mercFactory,
-        IERC20 _resource
+        IERC20 _resource,
+        uint256 _initialProductionPerDay,
+        uint256 _halvingPeriod
     ) external initializer {
         // Initialize AccessManaged with the authority
         _setAuthority(_authority);
@@ -125,7 +128,8 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
         resource = _resource;
         createdAt = block.timestamp;
         lastResourceClaim = block.timestamp;
-        // Initially unowned
+        initialProductionPerDay = _initialProductionPerDay;
+        halvingPeriod = _halvingPeriod;
     }
 
     /**
@@ -427,7 +431,7 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
      */
     function getCurrentProduction() external view returns (uint256) {
         uint256 timeElapsed = block.timestamp - createdAt;
-        uint256 halvingPeriods = timeElapsed / HALVING_PERIOD;
+        uint256 halvingPeriods = timeElapsed / halvingPeriod;
 
         // Production halves every period: production = initial / (2^periods)
         // To avoid underflow, we cap at 64 periods
@@ -435,7 +439,7 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
             return 0;
         }
 
-        uint256 currentDailyProduction = INITIAL_PRODUCTION_PER_DAY >> halvingPeriods;
+        uint256 currentDailyProduction = initialProductionPerDay >> halvingPeriods;
         return currentDailyProduction / 1 days; // Per second production
     }
 
