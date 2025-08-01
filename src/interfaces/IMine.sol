@@ -15,6 +15,8 @@ interface IMine {
         uint256 lastSeized;
         uint256 createdAt;
         uint256 defenseBoostExpiry;
+        uint256 initialProductionPerDay;
+        uint256 halvingPeriod;
     }
 
     struct BattleLogEntry {
@@ -35,6 +37,8 @@ interface IMine {
     function claimResources() external;
     function activateDefenseBoost() external;
     function getMineInfo() external view returns (MineInfo memory);
+    function initialProductionPerDay() external view returns (uint256);
+    function halvingPeriod() external view returns (uint256);
     function getCurrentProduction() external view returns (uint256);
     function getAccumulatedResources() external view returns (uint256);
     function calculateBattlePower(uint256 mercLevel, uint256 mercAmount, bool isDefending)

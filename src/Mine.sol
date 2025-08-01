@@ -420,7 +420,9 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
             owner: owner(),
             lastSeized: lastSeized,
             createdAt: createdAt,
-            defenseBoostExpiry: defenseBoostExpiry
+            defenseBoostExpiry: defenseBoostExpiry,
+            initialProductionPerDay: initialProductionPerDay,
+            halvingPeriod: halvingPeriod
         });
     }
 

@@ -783,6 +783,8 @@ contract MineTest is Test {
         assertEq(info.lastSeized, block.timestamp);
         assertEq(info.createdAt, mine.createdAt());
         assertEq(info.defenseBoostExpiry, 0);
+        assertEq(info.initialProductionPerDay, INITIAL_PRODUCTION_PER_DAY);
+        assertEq(info.halvingPeriod, HALVING_PERIOD);
     }
 
     // =============================================================================
