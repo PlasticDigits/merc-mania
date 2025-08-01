@@ -7,6 +7,8 @@ import "../src/MineFactory.sol";
 import "../src/Mine.sol";
 import "../src/GameMaster.sol";
 import "../src/MercAssetFactory.sol";
+import "../src/PlayerStats.sol";
+import "../src/GameStats.sol";
 import "../src/interfaces/IResourceManager.sol";
 import "../src/interfaces/IGameMaster.sol";
 import "../src/interfaces/IGuardERC20.sol";
@@ -121,6 +123,8 @@ contract MineFactoryTest is Test {
     GameMaster public gameMaster;
     MercAssetFactory public mercFactory;
     MockGuard public mockGuard;
+    PlayerStats public playerStats;
+    GameStats public gameStats;
     uint256 public constant INITIAL_PRODUCTION_PER_DAY = 100 ether;
     uint256 public constant HALVING_PERIOD = 3 days;
 
@@ -145,9 +149,15 @@ contract MineFactoryTest is Test {
         resourceManager = new MockResourceManager();
         mockGuard = new MockGuard();
 
+        // Deploy stats contracts first
+        vm.prank(admin);
+        playerStats = new PlayerStats(address(accessManager));
+        vm.prank(admin);
+        gameStats = new GameStats(address(accessManager));
+
         // Deploy real GameMaster and MercAssetFactory
         vm.prank(admin);
-        gameMaster = new GameMaster(address(accessManager));
+        gameMaster = new GameMaster(address(accessManager), playerStats, gameStats);
 
         vm.prank(admin);
         mercFactory = new MercAssetFactory(address(accessManager), mockGuard);
@@ -161,7 +171,8 @@ contract MineFactoryTest is Test {
 
         // Deploy MineFactory
         vm.prank(admin);
-        factory = new MineFactory(address(accessManager), resourceManager, gameMaster, mercFactory);
+        factory =
+            new MineFactory(address(accessManager), resourceManager, gameMaster, mercFactory, playerStats, gameStats);
 
         // Set up access control
         vm.startPrank(admin);
@@ -204,6 +215,8 @@ contract MineFactoryTest is Test {
         assertEq(address(factory.GAME_MASTER()), address(gameMaster));
         assertEq(address(factory.MERC_FACTORY()), address(mercFactory));
         assertNotEq(factory.MINE_IMPLEMENTATION(), address(0));
+        assertEq(address(factory.PLAYER_STATS()), address(playerStats));
+        assertEq(address(factory.GAME_STATS()), address(gameStats));
 
         // Verify GAME_ROLE constant
         assertEq(factory.GAME_ROLE(), 2);
@@ -358,7 +371,8 @@ contract MineFactoryTest is Test {
 
         // Test with no mines
         vm.prank(admin);
-        MineFactory emptyFactory = new MineFactory(address(accessManager), resourceManager, gameMaster, mercFactory);
+        MineFactory emptyFactory =
+            new MineFactory(address(accessManager), resourceManager, gameMaster, mercFactory, playerStats, gameStats);
         result = emptyFactory.getMines(0, 1);
         assertEq(result.length, 0);
     }

@@ -8,6 +8,8 @@ import "../src/ERC20GameAsset.sol";
 import "../src/GameMaster.sol";
 import "../src/interfaces/IResourceManager.sol";
 import "../src/interfaces/IGuardERC20.sol";
+import "../src/PlayerStats.sol";
+import "../src/GameStats.sol";
 import "@openzeppelin/contracts/access/manager/AccessManager.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -61,7 +63,11 @@ contract ResourceManagerTest is Test {
         mockGuard = new MockGuard();
 
         // Deploy game master (needs access manager)
-        gameMaster = new GameMaster(address(accessManager));
+        // Deploy stats contracts
+        PlayerStats playerStats = new PlayerStats(address(accessManager));
+        GameStats gameStats = new GameStats(address(accessManager));
+
+        gameMaster = new GameMaster(address(accessManager), playerStats, gameStats);
 
         // Deploy asset factory
         assetFactory = new GameAssetFactory(address(accessManager), mockGuard, gameMaster);

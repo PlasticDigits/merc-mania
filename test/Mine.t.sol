@@ -8,6 +8,8 @@ import "../src/interfaces/IMine.sol";
 import "../src/interfaces/IResourceManager.sol";
 import "../src/interfaces/IGameMaster.sol";
 import "../src/interfaces/IERC20MintableBurnable.sol";
+import "../src/PlayerStats.sol";
+import "../src/GameStats.sol";
 import "@openzeppelin/contracts/access/manager/AccessManager.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/proxy/Clones.sol";
@@ -96,6 +98,17 @@ contract MockGameMaster is IGameMaster {
     function setBalance(address user, IERC20 token, uint256 amount) external {
         balances[user][token] = amount;
     }
+
+    // Rate limiting functions (unused in mocks)
+    function withdrawalRateLimitBps() external pure returns (uint256) {
+        return 0;
+    }
+
+    function setWithdrawalRateLimit(uint256) external pure {}
+
+    function getWithdrawalWindowData(IERC20) external pure returns (uint256, uint256, uint256) {
+        return (0, 0, 0);
+    }
 }
 
 /**
@@ -177,6 +190,8 @@ contract MineTest is Test {
     MockMercToken public merc1;
     MockMercToken public merc2;
     MockMercToken public merc3;
+    PlayerStats public playerStats;
+    GameStats public gameStats;
 
     // Implementation contract for cloning
     address public implementation;
@@ -215,6 +230,10 @@ contract MineTest is Test {
         mercFactory.setMercByLevel(2, address(merc2));
         mercFactory.setMercByLevel(3, address(merc3));
 
+        // Deploy stats contracts
+        playerStats = new PlayerStats(address(accessManager));
+        gameStats = new GameStats(address(accessManager));
+
         // Deploy implementation contract
         implementation = address(new Mine());
 
@@ -229,8 +248,35 @@ contract MineTest is Test {
             MercAssetFactory(address(mercFactory)),
             IERC20(address(ironToken)),
             INITIAL_PRODUCTION_PER_DAY,
-            HALVING_PERIOD
+            HALVING_PERIOD,
+            playerStats,
+            gameStats
         );
+
+        // Setup access control permissions for the mine (similar to what MineFactory does)
+        vm.startPrank(admin);
+
+        // Set up function role permissions for PlayerStats
+        bytes4[] memory playerStatsSelectors = new bytes4[](5);
+        playerStatsSelectors[0] = bytes4(keccak256("recordSeizeAttempt(address,address,bool,uint256,address)"));
+        playerStatsSelectors[1] = bytes4(keccak256("recordCombatStats(address,uint256,uint256,uint256)"));
+        playerStatsSelectors[2] = bytes4(keccak256("recordAbandon(address,address)"));
+        playerStatsSelectors[3] = bytes4(keccak256("recordClaim(address,address,uint256)"));
+        playerStatsSelectors[4] = bytes4(keccak256("recordDefenseBoost(address,address)"));
+        accessManager.setTargetFunctionRole(address(playerStats), playerStatsSelectors, 2);
+
+        // Set up function role permissions for GameStats
+        bytes4[] memory gameStatsSelectors = new bytes4[](4);
+        gameStatsSelectors[0] = bytes4(keccak256("recordGlobalSeize(address,bool,uint256,uint256)"));
+        gameStatsSelectors[1] = bytes4(keccak256("recordGlobalAbandon(address)"));
+        gameStatsSelectors[2] = bytes4(keccak256("recordGlobalClaim(address,address,uint256)"));
+        gameStatsSelectors[3] = bytes4(keccak256("recordGlobalDefenseBoost(address)"));
+        accessManager.setTargetFunctionRole(address(gameStats), gameStatsSelectors, 2);
+
+        // Grant GAME_ROLE (role ID 2) to the mine contract so it can call stats contracts
+        accessManager.grantRole(2, address(mine), 0);
+
+        vm.stopPrank();
 
         // Setup initial balances for testing
         gameMaster.setBalance(player1, IERC20(address(merc1)), 100 ether);
@@ -267,7 +313,9 @@ contract MineTest is Test {
             MercAssetFactory(address(mercFactory)),
             IERC20(address(ironToken)),
             INITIAL_PRODUCTION_PER_DAY,
-            HALVING_PERIOD
+            HALVING_PERIOD,
+            playerStats,
+            gameStats
         );
     }
 
@@ -281,7 +329,9 @@ contract MineTest is Test {
             MercAssetFactory(address(mercFactory)),
             IERC20(address(ironToken)),
             INITIAL_PRODUCTION_PER_DAY,
-            HALVING_PERIOD
+            HALVING_PERIOD,
+            playerStats,
+            gameStats
         );
 
         assertEq(address(newMine.RESOURCE_MANAGER()), address(resourceManager));
@@ -302,7 +352,9 @@ contract MineTest is Test {
             MercAssetFactory(address(mercFactory)),
             IERC20(address(ironToken)),
             INITIAL_PRODUCTION_PER_DAY,
-            HALVING_PERIOD
+            HALVING_PERIOD,
+            playerStats,
+            gameStats
         );
     }
 
@@ -336,6 +388,18 @@ contract MineTest is Test {
         assertEq(entry.attackerLosses, 0);
         assertEq(entry.defenderLosses, 0);
         assertTrue(entry.attackerWon);
+
+        // Verify statistics were recorded
+        (uint256 totalSeizes, uint256 successfulSeizes, uint256 failedSeizes) = playerStats.getSeizeStats(player1);
+        assertEq(totalSeizes, 1, "Player total seize attempts not recorded");
+        assertEq(successfulSeizes, 1, "Player successful seizes not recorded");
+        assertEq(failedSeizes, 0, "Player failed seizes should be 0");
+
+        (uint256 globalSuccess, uint256 globalFailed) = gameStats.getGlobalSeizeStats();
+        uint256 globalTotal = globalSuccess + globalFailed;
+        assertEq(globalTotal, 1, "Global total seize attempts not recorded");
+        assertEq(globalSuccess, 1, "Global successful seizes not recorded");
+        assertEq(globalFailed, 0, "Global failed seizes should be 0");
     }
 
     function test_seize_unowned_mine_insufficient_mercs() public {
@@ -445,7 +509,9 @@ contract MineTest is Test {
             MercAssetFactory(address(mercFactory)),
             IERC20(address(ironToken)),
             INITIAL_PRODUCTION_PER_DAY,
-            HALVING_PERIOD
+            HALVING_PERIOD,
+            playerStats,
+            gameStats
         );
 
         // Call getDefenderMercs on the fresh mine - this will hit the missing branch

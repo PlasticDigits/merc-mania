@@ -8,6 +8,8 @@ import {MercAssetFactory} from "./MercAssetFactory.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20MintableBurnable} from "./interfaces/IERC20MintableBurnable.sol";
 import {AccessManaged} from "@openzeppelin/contracts/access/manager/AccessManaged.sol";
+import {PlayerStats} from "./PlayerStats.sol";
+import {GameStats} from "./GameStats.sol";
 
 /**
  * @title MercRecruiter
@@ -30,6 +32,12 @@ contract MercRecruiter is IMercRecruiter, AccessManaged {
     /// @dev Used to create new mercenary tokens when needed and check existing levels
     MercAssetFactory public immutable MERC_FACTORY;
 
+    /// @notice Reference to the PlayerStats contract for tracking individual player statistics
+    PlayerStats public immutable PLAYER_STATS;
+
+    /// @notice Reference to the GameStats contract for tracking overall game statistics
+    GameStats public immutable GAME_STATS;
+
     error MercTokenDoesNotExist();
     error InsufficientResources();
     error AmountMustBeGreaterThanZero();
@@ -41,16 +49,22 @@ contract MercRecruiter is IMercRecruiter, AccessManaged {
      * @param _resourceManager The resource manager for validation and Gold access
      * @param _gameMaster The game master for balance management
      * @param _mercFactory The mercenary factory for token creation
+     * @param _playerStats The PlayerStats contract for individual player tracking
+     * @param _gameStats The GameStats contract for overall game tracking
      */
     constructor(
         address _authority,
         IResourceManager _resourceManager,
         GameMaster _gameMaster,
-        MercAssetFactory _mercFactory
+        MercAssetFactory _mercFactory,
+        PlayerStats _playerStats,
+        GameStats _gameStats
     ) AccessManaged(_authority) {
         RESOURCE_MANAGER = _resourceManager;
         GAME_MASTER = _gameMaster;
         MERC_FACTORY = _mercFactory;
+        PLAYER_STATS = _playerStats;
+        GAME_STATS = _gameStats;
     }
 
     /**
@@ -87,6 +101,10 @@ contract MercRecruiter is IMercRecruiter, AccessManaged {
         GAME_MASTER.addBalance(msg.sender, IERC20(mercToken), amount);
 
         emit MercsRecruited(msg.sender, level, amount, resources);
+
+        // Record statistics
+        PLAYER_STATS.recordRecruitment(msg.sender, level, amount);
+        GAME_STATS.recordGlobalRecruitment(msg.sender, level, amount);
     }
 
     /**
@@ -108,17 +126,33 @@ contract MercRecruiter is IMercRecruiter, AccessManaged {
      * @return True if the player can recruit the specified mercenaries, false otherwise
      */
     function canRecruitMercs(address player, IERC20[] calldata resources, uint256 amount) public view returns (bool) {
-        // Check if all resources are valid (this will also validate Gold inclusion)
-        try RESOURCE_MANAGER.validateResources(resources) {
-            // Check if player has sufficient balance of each resource
-            for (uint256 i = 0; i < resources.length; i++) {
-                if (GAME_MASTER.getBalance(player, resources[i]) < amount) {
+        // Check basic requirements
+        if (resources.length == 0 || amount == 0) {
+            return false;
+        }
+
+        // Check if Gold is included
+        bool goldIncluded = false;
+        for (uint256 i = 0; i < resources.length; i++) {
+            if (resources[i] == RESOURCE_MANAGER.GOLD()) {
+                goldIncluded = true;
+            }
+            if (!RESOURCE_MANAGER.isResource(resources[i])) {
+                return false;
+            }
+            for (uint256 j = i + 1; j < resources.length; j++) {
+                if (resources[i] == resources[j]) {
                     return false;
                 }
             }
-            return true;
-        } catch {
+            if (GAME_MASTER.getBalance(player, resources[i]) < amount) {
+                return false;
+            }
+        }
+        if (!goldIncluded) {
             return false;
         }
+
+        return true;
     }
 }

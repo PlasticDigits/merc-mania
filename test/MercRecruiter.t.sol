@@ -4,6 +4,8 @@ pragma solidity ^0.8.30;
 import "forge-std/Test.sol";
 import "forge-std/Vm.sol";
 import "../src/MercRecruiter.sol";
+import "../src/PlayerStats.sol";
+import "../src/GameStats.sol";
 import "../src/interfaces/IResourceManager.sol";
 import "../src/interfaces/IGameMaster.sol";
 import "../src/interfaces/IERC20MintableBurnable.sol";
@@ -95,8 +97,8 @@ contract MockResourceManager is IResourceManager {
         return IERC20(address(0));
     }
 
-    function isResource(IERC20) external pure override returns (bool) {
-        return false;
+    function isResource(IERC20 resource) external view override returns (bool) {
+        return validResources[address(resource)];
     }
 
     function getAllResources() external pure override returns (IERC20[] memory) {
@@ -144,6 +146,17 @@ contract MockGameMaster is IGameMaster {
     function deposit(IERC20, uint256) external pure override {}
     function withdraw(IERC20, uint256) external pure override {}
     function transferBalance(address, address, IERC20, uint256) external pure override {}
+
+    // Rate limiting functions (unused in mocks)
+    function withdrawalRateLimitBps() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function setWithdrawalRateLimit(uint256) external pure override {}
+
+    function getWithdrawalWindowData(IERC20) external pure override returns (uint256, uint256, uint256) {
+        return (0, 0, 0);
+    }
 }
 
 /**
@@ -206,6 +219,8 @@ contract MercRecruiterTest is Test {
     MockGameMaster public gameMaster;
     MockMercAssetFactory public mercFactory;
     AccessManager public accessManager;
+    PlayerStats public playerStats;
+    GameStats public gameStats;
 
     MockERC20Token public gold;
     MockERC20Token public iron;
@@ -227,6 +242,13 @@ contract MercRecruiterTest is Test {
         // Deploy AccessManager
         vm.prank(admin);
         accessManager = new AccessManager(admin);
+
+        // Deploy PlayerStats and GameStats
+        vm.prank(admin);
+        playerStats = new PlayerStats(address(accessManager));
+
+        vm.prank(admin);
+        gameStats = new GameStats(address(accessManager));
 
         // Deploy mock contracts
         resourceManager = new MockResourceManager();
@@ -260,8 +282,40 @@ contract MercRecruiterTest is Test {
             address(accessManager),
             resourceManager,
             GameMaster(address(gameMaster)),
-            MercAssetFactory(address(mercFactory))
+            MercAssetFactory(address(mercFactory)),
+            playerStats,
+            gameStats
         );
+
+        // Set up permissions for stats contracts
+        vm.startPrank(admin);
+        uint64 roleId = accessManager.ADMIN_ROLE();
+
+        // Grant MercRecruiter permission to call PlayerStats and GameStats functions
+        // First grant the MercRecruiter contract the ADMIN_ROLE
+        accessManager.grantRole(roleId, address(mercRecruiter), 0);
+
+        bytes4[] memory playerStatsSelectors = new bytes4[](8);
+        playerStatsSelectors[0] = bytes4(keccak256("recordDeposit(address,address,uint256)"));
+        playerStatsSelectors[1] = bytes4(keccak256("recordWithdrawal(address,address,uint256,uint256)"));
+        playerStatsSelectors[2] = bytes4(keccak256("recordRecruitment(address,uint256,uint256)"));
+        playerStatsSelectors[3] = bytes4(keccak256("recordSeizeAttempt(address,address,bool,uint256,address)"));
+        playerStatsSelectors[4] = bytes4(keccak256("recordAbandon(address,address)"));
+        playerStatsSelectors[5] = bytes4(keccak256("recordClaim(address,address,uint256)"));
+        playerStatsSelectors[6] = bytes4(keccak256("recordDefenseBoost(address,address)"));
+        playerStatsSelectors[7] = bytes4(keccak256("recordCombatStats(address,uint256,uint256,uint256)"));
+        accessManager.setTargetFunctionRole(address(playerStats), playerStatsSelectors, roleId);
+
+        bytes4[] memory gameStatsSelectors = new bytes4[](6);
+        gameStatsSelectors[0] = bytes4(keccak256("recordGlobalDeposit(address,address,uint256)"));
+        gameStatsSelectors[1] = bytes4(keccak256("recordGlobalWithdrawal(address,address,uint256,uint256)"));
+        gameStatsSelectors[2] = bytes4(keccak256("recordGlobalRecruitment(address,uint256,uint256)"));
+        gameStatsSelectors[3] = bytes4(keccak256("recordGlobalSeize(address,bool,uint256,uint256)"));
+        gameStatsSelectors[4] = bytes4(keccak256("recordGlobalAbandon(address)"));
+        gameStatsSelectors[5] = bytes4(keccak256("recordGlobalClaim(address,address,uint256)"));
+        accessManager.setTargetFunctionRole(address(gameStats), gameStatsSelectors, roleId);
+
+        vm.stopPrank();
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -273,6 +327,8 @@ contract MercRecruiterTest is Test {
         assertEq(address(mercRecruiter.GAME_MASTER()), address(gameMaster), "Game master not set");
         assertEq(address(mercRecruiter.MERC_FACTORY()), address(mercFactory), "Merc factory not set");
         assertEq(mercRecruiter.authority(), address(accessManager), "Authority not set");
+        assertEq(address(mercRecruiter.PLAYER_STATS()), address(playerStats), "Player stats not set");
+        assertEq(address(mercRecruiter.GAME_STATS()), address(gameStats), "Game stats not set");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -402,6 +458,14 @@ contract MercRecruiterTest is Test {
         // Verify balance changes
         assertEq(gameMaster.getBalance(player1, gold), 50, "Gold should be spent");
         assertEq(gameMaster.getBalance(player1, IERC20(address(level1Merc))), 50, "Level 1 mercs should be added");
+
+        // Verify statistics were recorded
+        assertEq(playerStats.getMercsRecruitedByLevel(player1, 1), 50, "Player merc recruitment stats not recorded");
+        assertEq(playerStats.getTotalMercsRecruited(player1), 50, "Player total merc stats not recorded");
+        assertEq(playerStats.getRecruitmentCount(player1), 1, "Player recruitment count not recorded");
+        assertEq(gameStats.getTotalMercsRecruitedByLevel(1), 50, "Game level 1 merc stats not recorded");
+        assertEq(gameStats.getTotalMercsRecruited(), 50, "Game total merc stats not recorded");
+        assertEq(gameStats.getTotalRecruitmentTransactions(), 1, "Game recruitment transaction count not recorded");
     }
 
     function test_RecruitMercs_Success_Level2() public {

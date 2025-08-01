@@ -15,6 +15,8 @@ import "../src/interfaces/IResourceManager.sol";
 import "../src/interfaces/IGameMaster.sol";
 import "../src/interfaces/IERC20MintableBurnable.sol";
 import "../src/interfaces/IGuardERC20.sol";
+import "../src/PlayerStats.sol";
+import "../src/GameStats.sol";
 import "@openzeppelin/contracts/access/manager/AccessManager.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -48,6 +50,8 @@ contract MercManiaScenario is Test {
     MineFactory public mineFactory;
     MercAssetFactory public mercAssetFactory;
     GameAssetFactory public gameAssetFactory;
+    PlayerStats public playerStats;
+    GameStats public gameStats;
     MockGuard public guard;
 
     // Player addresses
@@ -117,7 +121,11 @@ contract MercManiaScenario is Test {
         guard = new MockGuard();
 
         // Deploy core game contracts in correct dependency order
-        gameMaster = new GameMaster(address(accessManager));
+        // Deploy stats contracts
+        playerStats = new PlayerStats(address(accessManager));
+        gameStats = new GameStats(address(accessManager));
+
+        gameMaster = new GameMaster(address(accessManager), playerStats, gameStats);
         gameAssetFactory = new GameAssetFactory(address(accessManager), guard, gameMaster);
 
         // Set up initial access control permissions BEFORE creating ResourceManager
@@ -147,8 +155,12 @@ contract MercManiaScenario is Test {
         // Restore access control for createAsset
         accessManager.setTargetFunctionRole(address(gameAssetFactory), createAssetSelectors, accessManager.ADMIN_ROLE());
         mercAssetFactory = new MercAssetFactory(address(accessManager), guard);
-        mercRecruiter = new MercRecruiter(address(accessManager), resourceManager, gameMaster, mercAssetFactory);
-        mineFactory = new MineFactory(address(accessManager), resourceManager, gameMaster, mercAssetFactory);
+        mercRecruiter = new MercRecruiter(
+            address(accessManager), resourceManager, gameMaster, mercAssetFactory, playerStats, gameStats
+        );
+        mineFactory = new MineFactory(
+            address(accessManager), resourceManager, gameMaster, mercAssetFactory, playerStats, gameStats
+        );
 
         // Set up remaining access control permissions
         setupRemainingAccessControl();

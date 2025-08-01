@@ -10,6 +10,8 @@ import {AccessManaged} from "@openzeppelin/contracts/access/manager/AccessManage
 import {IAccessManager} from "@openzeppelin/contracts/access/manager/IAccessManager.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+import {PlayerStats} from "./PlayerStats.sol";
+import {GameStats} from "./GameStats.sol";
 
 /**
  * @title MineFactory
@@ -43,6 +45,12 @@ contract MineFactory is AccessManaged {
     /// @dev Deployed once during factory construction to save gas on subsequent mine creation
     address public immutable MINE_IMPLEMENTATION;
 
+    /// @notice Reference to the PlayerStats contract for tracking individual player statistics
+    PlayerStats public immutable PLAYER_STATS;
+
+    /// @notice Reference to the GameStats contract for tracking overall game statistics
+    GameStats public immutable GAME_STATS;
+
     /// @notice Set containing addresses of all deployed mines
     /// @dev Uses EnumerableSet for efficient storage and enumeration of mine addresses
     EnumerableSet.AddressSet private _allMines;
@@ -65,16 +73,22 @@ contract MineFactory is AccessManaged {
      * @param _resourceManager The resource manager for validation
      * @param _gameMaster The game master for mine integration
      * @param _mercFactory The mercenary factory for mine integration
+     * @param _playerStats The PlayerStats contract for individual player tracking
+     * @param _gameStats The GameStats contract for overall game tracking
      */
     constructor(
         address _authority,
         IResourceManager _resourceManager,
         GameMaster _gameMaster,
-        MercAssetFactory _mercFactory
+        MercAssetFactory _mercFactory,
+        PlayerStats _playerStats,
+        GameStats _gameStats
     ) AccessManaged(_authority) {
         RESOURCE_MANAGER = _resourceManager;
         GAME_MASTER = _gameMaster;
         MERC_FACTORY = _mercFactory;
+        PLAYER_STATS = _playerStats;
+        GAME_STATS = _gameStats;
 
         // Deploy the implementation contract once
         MINE_IMPLEMENTATION = address(new Mine());
@@ -100,7 +114,15 @@ contract MineFactory is AccessManaged {
 
         // Initialize the cloned mine
         Mine(mineAddress).initialize(
-            authority(), RESOURCE_MANAGER, GAME_MASTER, MERC_FACTORY, resource, initialProductionPerDay, halvingPeriod
+            authority(),
+            RESOURCE_MANAGER,
+            GAME_MASTER,
+            MERC_FACTORY,
+            resource,
+            initialProductionPerDay,
+            halvingPeriod,
+            PLAYER_STATS,
+            GAME_STATS
         );
 
         // Grant game permissions to the new mine on GameMaster

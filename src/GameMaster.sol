@@ -7,6 +7,9 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {AccessManaged} from "@openzeppelin/contracts/access/manager/AccessManaged.sol";
 import {IERC20MintableBurnable} from "./interfaces/IERC20MintableBurnable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {PlayerStats} from "./PlayerStats.sol";
+import {GameStats} from "./GameStats.sol";
 
 /**
  * @title GameMaster
@@ -16,7 +19,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
  *      manipulate balances for game mechanics like combat, crafting, and resource consumption.
  * @author Merc Mania Development Team
  */
-contract GameMaster is IGameMaster, AccessManaged, ReentrancyGuard {
+contract GameMaster is IGameMaster, AccessManaged, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
     /// @notice Dead address used when tokens cannot be burned through the standard burn interface
@@ -32,12 +35,66 @@ contract GameMaster is IGameMaster, AccessManaged, ReentrancyGuard {
     /// @dev Structure: token contract => total amount held
     mapping(IERC20 token => uint256 totalHeld) private _totals;
 
+    /// @notice Reference to the PlayerStats contract for tracking individual player statistics
+    PlayerStats public immutable PLAYER_STATS;
+
+    /// @notice Reference to the GameStats contract for tracking overall game statistics
+    GameStats public immutable GAME_STATS;
+
+    /// @notice Basis points for withdrawal rate limit (10,000 = 100%)
+    uint256 public withdrawalRateLimitBps;
+
+    /// @notice Struct to track withdrawal data within a 24-hour window
+    struct WithdrawalWindow {
+        uint256 windowStart; // Timestamp when the current window started
+        uint256 amountWithdrawn; // Total amount withdrawn in current window
+    }
+
+    /// @notice Mapping to track withdrawal windows per token
+    mapping(IERC20 token => WithdrawalWindow) private withdrawalWindows;
+
     /**
-     * @notice Constructs the GameMaster with the specified access authority
-     * @dev Sets up access control for the contract
+     * @notice Constructs the GameMaster with the specified access authority and stats contracts
+     * @dev Sets up access control for the contract and connects to statistics tracking
      * @param _authority The access manager contract that controls permissions
+     * @param _playerStats The PlayerStats contract for individual player tracking
+     * @param _gameStats The GameStats contract for overall game tracking
      */
-    constructor(address _authority) AccessManaged(_authority) {}
+    constructor(address _authority, PlayerStats _playerStats, GameStats _gameStats) AccessManaged(_authority) {
+        PLAYER_STATS = _playerStats;
+        GAME_STATS = _gameStats;
+        withdrawalRateLimitBps = 100; // Default to 1% daily withdrawal limit
+    }
+
+    /**
+     * @notice Internal function to check and update withdrawal rate limits
+     * @dev Resets window if more than 24 hours have passed, then checks if withdrawal would exceed limit
+     * @param token The token being withdrawn
+     * @param amount The amount being withdrawn (total amount, before burn calculation)
+     */
+    function _checkWithdrawalRateLimit(IERC20 token, uint256 amount) internal {
+        if (withdrawalRateLimitBps == 0) {
+            return; // No rate limit if set to 0
+        }
+
+        WithdrawalWindow storage window = withdrawalWindows[token];
+
+        // Reset window if more than 24 hours have passed or if it's the first withdrawal
+        if (window.windowStart == 0 || block.timestamp >= window.windowStart + 1 days) {
+            window.windowStart = block.timestamp;
+            window.amountWithdrawn = 0;
+        }
+
+        // Calculate rate limit based on total token supply held by GameMaster
+        uint256 totalHeld = _totals[token];
+        uint256 rateLimit = (totalHeld * withdrawalRateLimitBps) / 10000;
+
+        // Check if this withdrawal would exceed the rate limit
+        require(window.amountWithdrawn + amount <= rateLimit, "Withdrawal rate limit exceeded");
+
+        // Update the withdrawal amount for this window
+        window.amountWithdrawn += amount;
+    }
 
     /**
      * @notice Allows users to deposit tokens into the GameMaster for use in game mechanics
@@ -46,7 +103,7 @@ contract GameMaster is IGameMaster, AccessManaged, ReentrancyGuard {
      * @param token The ERC20 token contract to deposit
      * @param amount The amount of tokens to deposit (must be > 0)
      */
-    function deposit(IERC20 token, uint256 amount) external nonReentrant {
+    function deposit(IERC20 token, uint256 amount) external nonReentrant whenNotPaused {
         require(amount > 0, "Amount must be greater than 0");
 
         // Transfer tokens from user to this contract
@@ -59,6 +116,10 @@ contract GameMaster is IGameMaster, AccessManaged, ReentrancyGuard {
 
         emit Deposited(msg.sender, address(token), amount);
         _checkTotal(token);
+
+        // Record statistics
+        PLAYER_STATS.recordDeposit(msg.sender, token, amount);
+        GAME_STATS.recordGlobalDeposit(msg.sender, token, amount);
     }
 
     /**
@@ -68,9 +129,12 @@ contract GameMaster is IGameMaster, AccessManaged, ReentrancyGuard {
      * @param token The ERC20 token contract to withdraw from
      * @param amount The total amount to withdraw (before penalty calculation)
      */
-    function withdraw(IERC20 token, uint256 amount) external nonReentrant {
+    function withdraw(IERC20 token, uint256 amount) external nonReentrant whenNotPaused {
         require(amount > 0, "Amount must be greater than 0");
         require(_balances[msg.sender][token] >= amount, "Insufficient balance");
+
+        // Check withdrawal rate limits
+        _checkWithdrawalRateLimit(token, amount);
 
         // Calculate amounts: 50% burned, 50% withdrawn
         uint256 withdrawAmount = amount / 2;
@@ -96,6 +160,10 @@ contract GameMaster is IGameMaster, AccessManaged, ReentrancyGuard {
 
         emit Withdrawn(msg.sender, address(token), withdrawAmount, burnAmount);
         _checkTotal(token);
+
+        // Record statistics
+        PLAYER_STATS.recordWithdrawal(msg.sender, token, amount, burnAmount);
+        GAME_STATS.recordGlobalWithdrawal(msg.sender, token, amount, burnAmount);
     }
 
     /**
@@ -155,7 +223,7 @@ contract GameMaster is IGameMaster, AccessManaged, ReentrancyGuard {
      * @param token The token to spend from the user's balance
      * @param amount The amount to spend from the user's balance
      */
-    function spendBalance(address user, IERC20 token, uint256 amount) external restricted nonReentrant {
+    function spendBalance(address user, IERC20 token, uint256 amount) external restricted nonReentrant whenNotPaused {
         _spendBalance(user, token, amount);
         IERC20MintableBurnable(address(token)).burn(amount);
         _checkTotal(token);
@@ -168,7 +236,7 @@ contract GameMaster is IGameMaster, AccessManaged, ReentrancyGuard {
      * @param token The token to add to the user's balance
      * @param amount The amount to add to the user's balance
      */
-    function addBalance(address user, IERC20 token, uint256 amount) external restricted nonReentrant {
+    function addBalance(address user, IERC20 token, uint256 amount) external restricted nonReentrant whenNotPaused {
         IERC20MintableBurnable(address(token)).mint(address(this), amount);
         _addBalance(user, token, amount);
         _checkTotal(token);
@@ -186,8 +254,61 @@ contract GameMaster is IGameMaster, AccessManaged, ReentrancyGuard {
         external
         restricted
         nonReentrant
+        whenNotPaused
     {
         _transferBalance(userFrom, userTo, token, amount);
+    }
+
+    /**
+     * @notice Pauses all critical operations including deposits, withdrawals, and balance modifications
+     * @dev Only callable by authorized addresses with appropriate permissions
+     */
+    function pause() external restricted {
+        _pause();
+    }
+
+    /**
+     * @notice Unpauses all critical operations
+     * @dev Only callable by authorized addresses with appropriate permissions
+     */
+    function unpause() external restricted {
+        _unpause();
+    }
+
+    /**
+     * @notice Sets the withdrawal rate limit in basis points
+     * @dev Only callable by authorized addresses with appropriate permissions
+     * @param _rateLimitBps New rate limit in basis points (10,000 = 100%, 0 = no limit)
+     */
+    function setWithdrawalRateLimit(uint256 _rateLimitBps) external restricted {
+        require(_rateLimitBps <= 10000, "Rate limit cannot exceed 100%");
+        uint256 oldLimit = withdrawalRateLimitBps;
+        withdrawalRateLimitBps = _rateLimitBps;
+        emit WithdrawalRateLimitUpdated(oldLimit, _rateLimitBps);
+    }
+
+    /**
+     * @notice Gets withdrawal data for a specific token's current window
+     * @param token The token to check withdrawal data for
+     * @return windowStart The timestamp when the current window started
+     * @return amountWithdrawn The amount withdrawn in the current window
+     * @return rateLimit The current rate limit for this token
+     */
+    function getWithdrawalWindowData(IERC20 token)
+        external
+        view
+        returns (uint256 windowStart, uint256 amountWithdrawn, uint256 rateLimit)
+    {
+        WithdrawalWindow storage window = withdrawalWindows[token];
+        windowStart = window.windowStart;
+        amountWithdrawn = window.amountWithdrawn;
+
+        if (withdrawalRateLimitBps == 0) {
+            rateLimit = type(uint256).max; // No limit
+        } else {
+            uint256 totalHeld = _totals[token];
+            rateLimit = (totalHeld * withdrawalRateLimitBps) / 10000;
+        }
     }
 
     function _checkTotal(IERC20 token) internal view {

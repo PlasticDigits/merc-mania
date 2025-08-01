@@ -11,6 +11,8 @@ import {IERC20MintableBurnable} from "./interfaces/IERC20MintableBurnable.sol";
 import {AccessManaged} from "@openzeppelin/contracts/access/manager/AccessManaged.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {PlayerStats} from "./PlayerStats.sol";
+import {GameStats} from "./GameStats.sol";
 
 /**
  * @title Mine
@@ -86,6 +88,12 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
     /// @dev Allows enumeration of all mine seizure events without requiring indexing
     BattleLogEntry[] public battleLog;
 
+    /// @notice Reference to the PlayerStats contract for tracking individual player statistics
+    PlayerStats public PLAYER_STATS;
+
+    /// @notice Reference to the GameStats contract for tracking overall game statistics
+    GameStats public GAME_STATS;
+
     error InsufficientGold();
     error InsufficientMercs();
     error InsufficientBalance();
@@ -109,6 +117,8 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
      * @param _mercFactory The mercenary factory for token validation
      * @param _resource The resource token this mine will produce
      * @param _initialProductionPerDay The initial production rate per day
+     * @param _playerStats The PlayerStats contract for individual player tracking
+     * @param _gameStats The GameStats contract for overall game tracking
      */
     function initialize(
         address _authority,
@@ -117,7 +127,9 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
         MercAssetFactory _mercFactory,
         IERC20 _resource,
         uint256 _initialProductionPerDay,
-        uint256 _halvingPeriod
+        uint256 _halvingPeriod,
+        PlayerStats _playerStats,
+        GameStats _gameStats
     ) external initializer {
         // Initialize AccessManaged with the authority
         _setAuthority(_authority);
@@ -125,6 +137,8 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
         RESOURCE_MANAGER = _resourceManager;
         GAME_MASTER = _gameMaster;
         MERC_FACTORY = _mercFactory;
+        PLAYER_STATS = _playerStats;
+        GAME_STATS = _gameStats;
         resource = _resource;
         createdAt = block.timestamp;
         lastResourceClaim = block.timestamp;
@@ -185,6 +199,11 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
         defenderMercToken = mercToken;
         lastSeized = block.timestamp;
         emit MineSeized(msg.sender, 0, 0);
+
+        // Record statistics for unowned mine seizure
+        uint256 attackPower = calculateBattlePower(ERC20MercAsset(address(mercToken)).getLevel(), mercAmount, false);
+        PLAYER_STATS.recordSeizeAttempt(msg.sender, address(this), true, attackPower, address(0));
+        GAME_STATS.recordGlobalSeize(msg.sender, true, attackPower, 0);
     }
 
     /**
@@ -197,14 +216,14 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
         require(msg.sender != owner(), AlreadyOwned());
 
         uint256 attackerLevel = ERC20MercAsset(address(mercToken)).getLevel();
-        uint256 attackerPower = this.calculateBattlePower(attackerLevel, mercAmount, false);
+        uint256 attackerPower = calculateBattlePower(attackerLevel, mercAmount, false);
 
         // Get defender's merc data
         (IERC20 currentDefenderToken, uint256 currentDefenderCount) = getDefenderMercs();
         require(currentDefenderCount > 0, InsufficientMercs());
 
         uint256 defenderLevel = ERC20MercAsset(address(currentDefenderToken)).getLevel();
-        uint256 defenderPower = this.calculateBattlePower(defenderLevel, currentDefenderCount, true);
+        uint256 defenderPower = calculateBattlePower(defenderLevel, currentDefenderCount, true);
 
         if (attackerPower > defenderPower) {
             _handleAttackerVictory(
@@ -290,6 +309,12 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
         defenseBoostExpiry = 0;
 
         emit MineSeized(msg.sender, attackerLosses, defenderLosses);
+
+        // Record statistics for successful seizure
+        PLAYER_STATS.recordSeizeAttempt(msg.sender, address(this), true, attackerPower, owner());
+        PLAYER_STATS.recordCombatStats(msg.sender, attackerLosses, currentDefenderCount, 0);
+        PLAYER_STATS.recordCombatStats(owner(), currentDefenderCount, 0, defenderPower);
+        GAME_STATS.recordGlobalSeize(msg.sender, true, attackerPower, attackerLosses + currentDefenderCount);
     }
 
     /**
@@ -338,6 +363,12 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
         }
 
         emit MineSeized(owner(), attackerLosses, defenderLosses);
+
+        // Record statistics for failed seizure
+        PLAYER_STATS.recordSeizeAttempt(msg.sender, address(this), false, attackerPower, owner());
+        PLAYER_STATS.recordCombatStats(msg.sender, attackerLosses, 0, 0);
+        PLAYER_STATS.recordCombatStats(owner(), defenderLosses, 0, defenderPower);
+        GAME_STATS.recordGlobalSeize(msg.sender, false, attackerPower, attackerLosses + defenderLosses);
     }
 
     /**
@@ -371,6 +402,10 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
         _transferOwnership(address(0));
         defenderMercToken = IERC20(address(0));
         defenseBoostExpiry = 0;
+
+        // Record statistics for mine abandonment
+        PLAYER_STATS.recordAbandon(msg.sender, address(this));
+        GAME_STATS.recordGlobalAbandon(msg.sender);
     }
 
     /**
@@ -388,6 +423,10 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
         GAME_MASTER.addBalance(msg.sender, resource, accumulatedResources);
 
         emit ResourcesClaimed(msg.sender, accumulatedResources);
+
+        // Record statistics for resource claim
+        PLAYER_STATS.recordClaim(msg.sender, resource, accumulatedResources);
+        GAME_STATS.recordGlobalClaim(msg.sender, resource, accumulatedResources);
     }
 
     /**
@@ -407,6 +446,10 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
         defenseBoostExpiry = block.timestamp + DEFENSE_BOOST_DURATION;
 
         emit DefenseBoostActivated(msg.sender, goldCost, defenseBoostExpiry);
+
+        // Record statistics for defense boost activation
+        PLAYER_STATS.recordDefenseBoost(msg.sender, address(this));
+        GAME_STATS.recordGlobalDefenseBoost(msg.sender);
     }
 
     /**
@@ -431,7 +474,7 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
      * @dev Production halves every 3 days, capped at 64 halving periods to prevent underflow
      * @return The current production rate in tokens per second
      */
-    function getCurrentProduction() external view returns (uint256) {
+    function getCurrentProduction() public view returns (uint256) {
         uint256 timeElapsed = block.timestamp - createdAt;
         uint256 halvingPeriods = timeElapsed / halvingPeriod;
 
@@ -447,16 +490,42 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
 
     /**
      * @notice Calculates the total resources that can be claimed since the last claim
-     * @dev Returns 0 if the mine is unowned, otherwise calculates based on time elapsed and current production
+     * @dev Returns 0 if the mine is unowned, otherwise calculates based on time elapsed and production rates
+     *      Properly handles cases where a halving event occurred during the accumulation period
      * @return The amount of resources available for claiming
      */
     function getAccumulatedResources() public view returns (uint256) {
         if (owner() == address(0)) return 0;
 
-        uint256 timeElapsed = block.timestamp - lastResourceClaim;
-        uint256 currentProduction = this.getCurrentProduction();
+        uint256 currentTime = block.timestamp;
+        uint256 startTime = lastResourceClaim;
 
-        return currentProduction * timeElapsed;
+        // Calculate which halving period we started in and which we're currently in
+        uint256 startHalvingPeriod = (startTime - createdAt) / halvingPeriod;
+        uint256 currentHalvingPeriod = (currentTime - createdAt) / halvingPeriod;
+
+        // If we're in the same halving period, use the simple calculation
+        if (startHalvingPeriod == currentHalvingPeriod) {
+            uint256 timeElapsed = currentTime - startTime;
+            uint256 currentProduction = getCurrentProduction();
+            return currentProduction * timeElapsed;
+        }
+
+        // Otherwise, split the calculation across the halving boundary
+        uint256 nextHalvingTime = createdAt + (startHalvingPeriod + 1) * halvingPeriod;
+
+        // Calculate rewards before the halving at the previous halving rate
+        // Since production always halves, previous rate = current rate * 2
+        uint256 timeBeforeHalving = nextHalvingTime - startTime;
+        uint256 productionBeforeHalving = getCurrentProduction() * 2;
+        uint256 rewardsBeforeHalving = productionBeforeHalving * timeBeforeHalving;
+
+        // Calculate rewards after the halving at the new rate
+        uint256 timeAfterHalving = currentTime - nextHalvingTime;
+        uint256 productionAfterHalving = getCurrentProduction();
+        uint256 rewardsAfterHalving = productionAfterHalving * timeAfterHalving;
+
+        return rewardsBeforeHalving + rewardsAfterHalving;
     }
 
     /**
@@ -469,7 +538,7 @@ contract Mine is IMine, AccessManaged, Initializable, Ownable {
      * @return The total battle power of the mercenary force
      */
     function calculateBattlePower(uint256 mercLevel, uint256 mercAmount, bool isDefending)
-        external
+        public
         view
         returns (uint256)
     {
